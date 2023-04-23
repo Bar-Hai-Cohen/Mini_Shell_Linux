@@ -4,6 +4,8 @@
 #include <string.h>
 #include <unistd.h>// This header file provides access to system call
 #include <sys/wait.h> //This header file provides access to functions which are used for managing child processes and their exit status.
+#include <signal.h>
+#include <sys/fcntl.h>
 
 //Define Constants
 #define MAX_COMMAND_LENGTH 512
@@ -12,7 +14,7 @@
 int count_command = 0; //Counter the number of the command
 int sum_arg = 0; //summarize the number of the arguments
 int arg_count = 0;//Count the number of valid arguments
-int flag_var =0; // 0 - no var, 1-there is var
+int flag_var = 0; // 0 - no var, 1-there is var
 
 //Pre-Declaration Function
 
@@ -109,6 +111,11 @@ void freeList(struct Node *head) {
     }
 }
 
+void sigtstp_handler(int sig) {
+    printf("Stopping process...\n");
+    raise(SIGSTOP);
+}
+
 /*
  * Function that search the index of a specific character
  * if the index is not exists return -1
@@ -147,7 +154,8 @@ void execute_command(char *command, char *args[]) {
          *  system call, and saves the exit status of the child process in the status variable.
          */
         waitpid(pid, &status, 0);
-        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) { //checks whether a child process has terminated normally and has returned an exit status of 0.
+        if (WIFEXITED(status) && WEXITSTATUS(status) ==
+                                 0) { //checks whether a child process has terminated normally and has returned an exit status of 0.
             //printf("child process worked\n");
         } else {
             // printf("\before:  count command:%d,sum arg:%d,arg count:%d",count_command,sum_arg,arg_count);
@@ -163,6 +171,7 @@ void execute_command(char *command, char *args[]) {
         exit(1);
     }
 }
+
 /*
  * Function that save in the DS-linked list the variable
  * first he check if the value is exists if it is his he updates his value
@@ -178,6 +187,7 @@ void save_variable(char var[], char result[]) {
     }
     //printList(head);
 }
+
 /*
  * This is a C function called dolar_in_dash that takes a string as input and
  * replaces all instances of $<variable_name>
@@ -191,23 +201,23 @@ void dolar_in_dash(char *str) {
     char str_variable[510]; //the key of the variable
     memset(str_variable, 0, strlen(str_variable)); //reset all the save array to null
 
-    if (str[0]!='$') {
-        int index =find_char_index(str,'$');
-        strncat(str_variable,str,index);
+    if (str[0] != '$') {
+        int index = find_char_index(str, '$');
+        strncat(str_variable, str, index);
     }
     take_str = strtok(str, "$");
     while (take_str != NULL) {
         int space = find_char_index(take_str, ' ');
-        if(space==-1){
-            space= strlen(take_str);
+        if (space == -1) {
+            space = strlen(take_str);
         }
         strncpy(var_i, take_str, space);
         struct Node *node = findNode(head, var_i); //find if we have node with this key
         if (node != NULL) { // if we have node copy to subtoken the value
             strcat(str_variable, node->value);
-            strcat(str_variable," ");
-            if(space != strlen(take_str)-1){
-                strcat(str_variable,take_str+ space+1);
+            strcat(str_variable, " ");
+            if (space != strlen(take_str) - 1) {
+                strcat(str_variable, take_str + space + 1);
             }
         } else {
             strcat(str_variable, "");
@@ -216,22 +226,23 @@ void dolar_in_dash(char *str) {
     }
     strcpy(str, str_variable);
 }
+
 /*
  * method to remove all the dashes that are inside the word and not on the side
  */
-void remove_dashes(char* str) {
+void remove_dashes(char *str) {
     int i, j;
     int len = strlen(str);
 
     for (i = 0; i < len; i++) {
         if (str[i] == '"') {
             // Check if the dash is surrounded by non-space characters
-            if ((i == 0 || str[i-1] != ' ') && (i == len-1 || str[i+1] != ' ')) {
+            if ((i == 0 || str[i - 1] != ' ') && (i == len - 1 || str[i + 1] != ' ')) {
                 // Shift the remaining characters in the string left by one
-                for (j = i; j < len-1; j++) {
-                    str[j] = str[j+1];
+                for (j = i; j < len - 1; j++) {
+                    str[j] = str[j + 1];
                 }
-                str[len-1] = '\0'; // Null-terminate the string
+                str[len - 1] = '\0'; // Null-terminate the string
                 len--; // Decrease the length of the string by 1
                 i--; // Decrement i to account for the removed dash
             }
@@ -239,58 +250,125 @@ void remove_dashes(char* str) {
     }
 }
 
+void execute_and_redirect(char *command, char *filename) {
+    // open the file for writing
+    FILE *file = fopen(filename, "w");
+    if (!file) {
+        printf("Error opening file for writing.\n");
+        return;
+    }
+
+    // redirect stdout to the file
+    int fd = fileno(file); // get the file number descriptor
+
+    if (dup2(fd, STDOUT_FILENO) == -1) {
+        printf("Error redirecting stdout to file.\n");
+        fclose(file);
+        return;
+    }
+
+    // execute the command in the shell
+    system(command);
+
+    // restore stdout to the console
+    fflush(stdout);
+    dup2(STDOUT_FILENO, fd);
+
+    // close the file
+    fclose(file);
+}
+
+void redirect_to_file(char *command, char *filename) {
+    // open the file for writing
+    int file = open(filename, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | 0644);
+    if (file < 0) {
+        printf("Error opening file for writing.\n");
+        return;
+    }
+
+    // redirect stdout to the file
+    int stdout_copy = dup(STDOUT_FILENO);
+    if (dup2(file, STDOUT_FILENO) == -1) {
+        printf("Error redirecting stdout to file.\n");
+        close(file);
+        return;
+    }
+
+    // execute the command in the shell
+    system(command);
+
+    // restore stdout to the console
+    fflush(stdout);
+    dup2(stdout_copy, STDOUT_FILENO);
+
+    // close the file
+    close(file);
+}
+
 /*
  *This function split string by space
  * and every string slice checked if he contains $/cd/= signs
  */
-void slice_by_space(char*str,char**args, int*count){
+void slice_by_space(char *str, char **args, int *count) {
     char *token;
+    char str_copy[510];
+    strcpy(str_copy, str);
+
+    int index_arrow = find_char_index(str_copy, '>'); //get the index of the arrow '>' in the string
     token = strtok(str, " ");//split by space
-    while (token != NULL){
-        flag_var=0;
+    while (token != NULL) {
+        flag_var = 0;
         int index_equals_sign = find_char_index(token, '='); //get the index of the = in the string
         int index_dolar = find_char_index(token, '$'); //get the index of the $ in the string
-        if( index_equals_sign != -1){
-            if(index_equals_sign==0){
+        if (index_equals_sign != -1) {
+            if (index_equals_sign == 0) {
                 return;
             }
-            flag_var=1;
+            flag_var = 1;
             char var[510];//the key of the variable
             char result[510]; //the value of the variable
             memset(var, 0, strlen(var));//reset all the save array to null
             memset(result, 0, strlen(result));//reset all the save array to null
             // Copy the substring from src to dest
-            strncpy(var, token , index_equals_sign);
+            strncpy(var, token, index_equals_sign);
             strncpy(result, token + index_equals_sign + 1, strlen(token) - 1);
             save_variable(var, result);
             printList(head);
             return; //return not to go the execute command
-        }
-        else if( index_dolar != -1){
+        } else if (index_dolar != -1) {
             char key_value[510]; //the key of the variable
             memset(key_value, 0, strlen(key_value)); //reset all the save array to null
-            strncat(key_value, token+index_dolar+1, strlen(token)-index_dolar);//copy to var value only the key dashes
+            strncat(key_value, token + index_dolar + 1,
+                    strlen(token) - index_dolar);//copy to var value only the key dashes
             struct Node *node = findNode(head, key_value); //find if we have node with this key
             if (node != NULL) { // if we have node copy to subtoken the value
-                strcpy(token+index_dolar,node->value);
+                strcpy(token + index_dolar, node->value);
+            } else {
+                strcpy(token + index_dolar, "");
             }
-            else{
-                strcpy(token+index_dolar,"");
-            }
-        }
-        else if (strcmp(token, "cd") == 0) { //if we have cd print error not support
+        } else if (strcmp(token, "cd") == 0) { //if we have cd print error not support
             printf("cd not supported\n");
             arg_count = 0;
             return;
+        } else if (strchr(token, '>') != NULL) {
+            char var_command[510];//the key of the variable
+            char file_name[510]; //the value of the variable
+            memset(var_command, 0, strlen(var_command));//reset all the save array to null
+            memset(file_name, 0, strlen(file_name));//reset all the save array to null
+            // Copy the substring from src to dest
+            strncpy(var_command, str_copy, index_arrow);
+            strncpy(file_name, str_copy + index_arrow + 1, strlen(str_copy) - 1);
+            //execute_and_redirect(var_command,file_name);
+            redirect_to_file(var_command, file_name);
         }
-        args[*count]=token;
+        args[*count] = token;
         (*count)++;
         arg_count++;
 
-        token= strtok(NULL, " ");
+        token = strtok(NULL, " ");
     }
-
 }
+
 /*
  * get the input from the user
  * and split the string and dividing by a semicolon will give the number of commands
@@ -310,25 +388,24 @@ void count_substrings(char *str, char **args) {
     remove_dashes(token);
     while (token != NULL) {
         count = 0;
-        arg_count=0;
+        arg_count = 0;
         memset(args, 0, MAX_ARGS); //reset all the save array to null
         subtoken = strtok_r(token, "\"", &saveptr2); //split by space
-        int in_dash=0;
-        if(subtoken[0]=='\"'){
-            in_dash=1;
+        int in_dash = 0;
+        if (subtoken[0] == '\"') {
+            in_dash = 1;
         }
         while (subtoken != NULL) {
-            if(in_dash%2 ==0){
-                char* dup = strdup(subtoken);
+            if (in_dash % 2 == 0) {
+                char *dup = strdup(subtoken);
                 slice_by_space(dup, args, &count);
                 in_dash++;
-            }
-            else{
+            } else {
                 int index_dolar = find_char_index(subtoken, '$'); //get the index of the $ in the string
-                if( index_dolar != -1){
+                if (index_dolar != -1) {
                     dolar_in_dash(subtoken);
                 }
-                args[count] =subtoken;
+                args[count] = subtoken;
                 (count)++;
                 arg_count++;
                 in_dash++;
@@ -336,17 +413,85 @@ void count_substrings(char *str, char **args) {
             subtoken = strtok_r(NULL, "\"", &saveptr2); //move to the next space
         }
         args[count] = NULL;
-        if (count > MAX_ARGS-1) { //check if there is more than arguments
+        if (count > MAX_ARGS - 1) { //check if there is more than arguments
             fprintf(stderr, "ERR\n");
             return;
         }
         count_command++; // count command
-        sum_arg+=count;
-        if(flag_var != 1){
+        sum_arg += count;
+        if (flag_var != 1) {
             execute_command(args[0], args); //execute the command
-        }
-        else count_command--;
+        } else count_command--;
         token = strtok_r(NULL, ";", &saveptr1); //move to the next semicolon
+    }
+}
+
+void pipe_commands(char *command_string) {
+    char *commands[100];
+    char *token;
+    int i = 0;
+
+    token = strtok(command_string, "|");
+    while (token != NULL) {
+        commands[i++] = token;
+        token = strtok(NULL, "|");
+    }
+    commands[i] = NULL;
+
+    int num_commands = i;
+
+    int pipefd[2];
+    pid_t pid;
+    int prev_pipefd = -1;
+
+    for (i = 0; i < num_commands; i++) {
+        if (pipe(pipefd) == -1) {
+            perror("pipe");
+            exit(EXIT_FAILURE);
+        }
+
+        pid = fork();
+        if (pid == -1) {
+            perror("fork");
+            exit(EXIT_FAILURE);
+        }
+
+        if (pid == 0) {
+            // Child process for command
+            if (prev_pipefd != -1) {
+                close(prev_pipefd);
+                dup2(prev_pipefd, STDIN_FILENO);
+            }
+            if (i < num_commands - 1) {
+                close(pipefd[0]);
+                dup2(pipefd[1], STDOUT_FILENO);
+            }
+
+            // Execute command
+            char *arg_list[100];
+            int j = 0;
+            token = strtok(commands[i], " ");
+            while (token != NULL) {
+                arg_list[j++] = token;
+                token = strtok(NULL, " ");
+            }
+            arg_list[j] = NULL;
+            execvp(arg_list[0], arg_list);
+            perror("execvp");
+            exit(EXIT_FAILURE);
+        }
+
+        // Parent process
+        if (prev_pipefd != -1) {
+            close(prev_pipefd);
+        }
+        close(pipefd[1]);
+        prev_pipefd = pipefd[0];
+    }
+
+    close(prev_pipefd);
+    for (i = 0; i < num_commands; i++) {
+        wait(NULL);
     }
 }
 
@@ -369,6 +514,8 @@ int main() {
     char command[MAX_COMMAND_LENGTH]; //The command array
     char *args[MAX_ARGS];//The argument array
     int count_out = 0;//The counter for count when to exit from the shell
+    // Installation signal handler for SIGTSTP
+    signal(SIGTSTP, sigtstp_handler);
     while (1) {
 
         fflush(stdin);
