@@ -410,6 +410,35 @@ void slice_by_space(char *str, char **args, int *count) {
     }
 }
 
+void fix_dash_dollar(char* str){
+    int dash_index=0; int dollar_index=0;int space_index=0;int flag_count_value=0;int count_dash =0;
+    for (int i = 0; i < strlen(str); ++i) {
+        if(str[i]==' '){
+            space_index=i;
+        }
+        else if(str[i]=='$'){
+            dollar_index=i;
+            flag_count_value=1;
+        }
+        else if(str[i]=='"'){
+            dash_index=i;
+            count_dash++;
+        }
+        if(space_index< dollar_index &&space_index<dash_index){
+            if(flag_count_value==1){
+                flag_count_value=0;
+                if(dollar_index>dash_index && count_dash%2==0){
+                    remove_dashes(str);
+                }
+                else{
+                    dolar_in_dash(str);
+                }
+            }
+
+        }
+    }
+}
+
 /*
  * get the input from the user
  * and split the string and dividing by a semicolon will give the number of commands
@@ -428,12 +457,14 @@ void count_substrings(char *str, char **args) {
     token = strtok_r(str, ";", &saveptr1);//split by ;
     int dollar = find_char_index(token, '$');
     int find_quotes = find_char_index(token, '"');
+    //remove_dashes(token);
     if (dollar == -1) {
         remove_dashes(token);
     }
-    else if(dollar<find_quotes){
-        dolar_in_dash(token);
-    }
+//    else if(dollar<find_quotes){
+//        dolar_in_dash(token);
+//    }
+    else fix_dash_dollar(token);
     while (token != NULL) {
         count = 0;
         arg_count = 0;
@@ -538,4 +569,4 @@ int main() {
 }
 
 
-// finish code Sof1
+// finish code Sof 1.1
